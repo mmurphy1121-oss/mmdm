@@ -9,20 +9,23 @@ const ICAL_URL = (import.meta as unknown as { env: Record<string, string | undef
 async function fetchICS(rawUrl: string, targetDate: Date): Promise<CalendarEvent[]> {
   const url = rawUrl.replace(/^webcal:\/\//i, 'https://')
 
-  // Try direct fetch first; fall back to CORS proxy if blocked
-  let text: string
-  try {
-    const res = await fetch(url)
-    if (!res.ok) throw new Error(`status ${res.status}`)
-    text = await res.text()
-  } catch {
-    const proxy = `https://corsproxy.io/?${encodeURIComponent(url)}`
-    const res = await fetch(proxy)
-    if (!res.ok) throw new Error(`proxy status ${res.status}`)
-    text = await res.text()
+  const proxies = [
+    (u: string) => fetch(u),
+    (u: string) => fetch(`https://corsproxy.io/?${encodeURIComponent(u)}`),
+    (u: string) => fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`),
+    (u: string) => fetch(`https://thingproxy.freeboard.io/fetch/${u}`),
+  ]
+
+  for (const attempt of proxies) {
+    try {
+      const res = await attempt(url)
+      if (!res.ok) continue
+      const text = await res.text()
+      if (text.includes('BEGIN:VCALENDAR')) return parseICS(text, targetDate)
+    } catch { /* try next */ }
   }
 
-  return parseICS(text, targetDate)
+  throw new Error('Could not load Apple Calendar — all proxies failed')
 }
 
 export function useExternalCalendar(selectedDate: Date) {
